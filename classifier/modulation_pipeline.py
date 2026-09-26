@@ -40,36 +40,52 @@ else:
 # TIER 1: HIGHER-ORDER CUMULANTS ENGINE
 # ============================================================================
 
-def compute_cumulants(iq_complex: np.ndarray):
-    """
-    Computes normalized cumulants (C40, C42, C63) from a 1D complex array.
-    """
-    # 1. Zero-mean centering and unit variance normalization
+# Classifier/classifier.py
+# Classifier/classifier.py
+
+def compute_all_cumulants(iq_complex: np.ndarray):
+    """Computes normalized cumulants (C40, C42, C63) for Tier 1 constellation matching."""
     centered = iq_complex - np.mean(iq_complex)
     power = np.mean(np.abs(centered)**2)
     y = centered / np.sqrt(power) if power > 1e-12 else centered
-    y_conj = np.conj(y)
-
-    # 2. Sample moments: mu_pq = E[ y^(p-q) * (y*)^q ]
+    
     mu20 = np.mean(y**2)
-    mu21 = np.mean(np.abs(y)**2)           # Identity reference (~1.0)
+    mu21 = np.mean(np.abs(y)**2)
     mu40 = np.mean(y**4)
     mu42 = np.mean((np.abs(y)**2) * (y**2))
     mu63 = np.mean(np.abs(y)**6)
-
-    # 3. Cumulant expansions
+    
     c40 = mu40 - 3.0 * (mu20**2)
     c42 = np.real(np.mean(np.abs(y)**4)) - np.abs(mu20)**2 - 2.0 * (mu21**2)
     c63 = mu63 - 9.0 * c42 * mu21 - (np.abs(mu20)**2) * mu21 - 6.0 * (mu21**3)
-
+    
     return float(np.real(c40)), float(c42), float(np.real(c63))
 
-
+def run_stage_2(iq_complex: np.ndarray, snr_est: float = 12.0) -> dict:
+    """
+    Standardized execution interface for Stage 2.
+    """
+    # Format (2, N) for Tier-2 CNN
+    iq_samples_2d = np.stack([iq_complex.real, iq_complex.imag]).astype(np.float32)
+    
+    # Run two-tier classifier
+    classification_res = classify(iq_samples_2d, snr_est=snr_est)
+    
+    # Compute all frontend explainability metrics
+    cumulants_map = compute_all_cumulants(iq_complex)
+    
+    return {
+        "class": classification_res["predicted_class"],
+        "confidence": classification_res["confidence"],
+        "tier_used": classification_res.get("tier_used", 1),
+        "cumulants": cumulants_map,
+        "probabilities": classification_res.get("reasoning", {}).get("softmax_scores", {})
+    }
 def tier1_classify(iq_complex: np.ndarray):
     """
     Evaluates observed cumulants against theoretical constellation baselines.
     """
-    c40, c42, c63 = compute_cumulants(iq_complex)
+    c40, c42, c63 = compute_all_cumulants(iq_complex)
     observed = np.array([c40, c42, c63])
 
     # Weights: Give higher priority to robust 4th-order moments (C40, C42)

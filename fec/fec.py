@@ -155,7 +155,31 @@ def _detect_and_decode_rs(bitstream):
                 }
 
     return best_candidate
+# Fec/fec.py
 
+def run_stage_5(bitstream: np.ndarray) -> dict:
+    """
+    Standardized execution interface for Stage 5.
+    """
+    fec_out = identify_and_decode(bitstream)
+    
+    code_type = fec_out["code_type"]
+    raw_params = fec_out.get("params")
+    
+    # Format parameter dictionary into clean string for frontend
+    if code_type == "convolutional" and isinstance(raw_params, dict):
+        params_str = f"K={raw_params.get('constraint_length')}, R={raw_params.get('rate')}"
+    elif code_type == "reed-solomon" and isinstance(raw_params, dict):
+        params_str = f"RS({raw_params.get('n')},{raw_params.get('k')}) nsym={raw_params.get('nsym')}"
+    else:
+        params_str = "None / Uncoded"
+        
+    return {
+        "type": code_type,
+        "params": params_str,
+        "confidence": round(float(fec_out["confidence"]), 4),
+        "decoded_bits": fec_out["decoded_bits"]
+    }
 
 def _bits_to_symbols(bits, m):
     symbols = []

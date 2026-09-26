@@ -763,16 +763,48 @@ function HexDumpPanel({ frames }) {
 // ---------------------------------------------------------------------------
 // Root Dashboard (Full-width vertical stack matching your screenshot)
 // ---------------------------------------------------------------------------
-export default function SDRDashboard({ result, waterfallData }) {
+// Frontend: SDRDashboard_1.jsx
+
+export default function SDRDashboard() {
   useGoogleFont();
   const [fileName, setFileName] = useState(null);
-  const data = useMemo(() => result || buildMockResult(), [result]);
-  const waterfall = useMemo(() => waterfallData || buildMockWaterfall(), [waterfallData]);
-  const psd = useMemo(() => buildMockPSD(waterfall), [waterfall]);
+  const [loading, setLoading] = useState(false);
+  const [backendResult, setBackendResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
-  const handleFile = useCallback((file) => {
+  // File Upload & Pipeline Invocation
+  const handleFile = useCallback(async (file) => {
     setFileName(file.name);
+    setLoading(true);
+    setErrorMsg(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const response = await fetch("http://localhost:8000/api/analyze", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server responded with ${response.status}`);
+      }
+
+      const json = await response.json();
+      setBackendResult(json);
+    } catch (err) {
+      console.error("Backend pipeline error:", err);
+      setErrorMsg("Failed to analyze file. Verify backend server is running on :8000.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  // Gracefully fallback to mock data if no file is uploaded yet
+  const data = useMemo(() => backendResult || buildMockResult(), [backendResult]);
+  const waterfall = useMemo(() => backendResult?.waterfall || buildMockWaterfall(), [backendResult]);
+  const psd = useMemo(() => backendResult?.psd || buildMockPSD(waterfall), [backendResult, waterfall]);
 
   return (
     <div
@@ -807,13 +839,25 @@ export default function SDRDashboard({ result, waterfallData }) {
           <span>FS {(data.fs / 1e6).toFixed(3)} MSPS</span>
           <span>RS {(data.rs / 1e3).toFixed(1)} KSPS</span>
           <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <span style={{ width: "6px", height: "6px", background: T.phosphor, boxShadow: `0 0 6px ${T.phosphor}` }} />
-            LIVE
+            <span
+              style={{
+                width: "6px",
+                height: "6px",
+                background: loading ? T.amber : T.phosphor,
+                boxShadow: `0 0 6px ${loading ? T.amber : T.phosphor}`,
+              }}
+            />
+            {loading ? "PROCESSING..." : "LIVE"}
           </span>
         </div>
       </header>
 
-      {/* Stacked alignment matching your exact screenshot structure */}
+      {errorMsg && (
+        <div style={{ margin: "16px", padding: "10px", background: "#FEE2E2", color: T.red, fontSize: "11px" }}>
+          {errorMsg}
+        </div>
+      )}
+
       <main
         style={{
           padding: "16px",

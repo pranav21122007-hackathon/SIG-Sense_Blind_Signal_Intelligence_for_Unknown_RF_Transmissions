@@ -265,6 +265,29 @@ def run_stage_4(input_source, w_min: int = 2, w_max: int = 64, plot: bool = Fals
         "stats": block_stats
     }
 
+# Deinterleaver/deinterleaver.py
+
+# In run_stage_4, modify the return block:
+def run_stage_4_adapted(input_source, w_min: int = 2, w_max: int = 64):
+    res = run_stage_4(input_source, w_min=w_min, w_max=w_max, plot=False)
+    
+    # Transform arrays to [{width, rank}] structure expected by the frontend
+    stats = res.get("stats", {})
+    candidate_w = stats.get("candidate_w", [])
+    raw_ranks = stats.get("raw_ranks", [])
+    
+    rank_profile = [
+        {"width": int(w), "rank": float(r)}
+        for w, r in zip(candidate_w, raw_ranks)
+    ]
+    
+    return {
+        "interleaver_type": res["interleaver_type"],
+        "detected_width": res["detected_width"] if res["detected_width"] is not None else 0,
+        "confidence": round(float(res["confidence"]), 4),
+        "rank_profile": rank_profile,
+        "output_bits": res["output_bits"]
+    }
 
 if __name__ == "__main__":
     print("=" * 60)

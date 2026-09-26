@@ -392,7 +392,39 @@ def run_stage_6(
         "preambles_found_count": len(preamble_hits),
         "hex_inspector": annotated_dump
     }
+# Framemining/framemining.py
 
+def run_stage_6_adapted(bitstream: np.ndarray) -> dict:
+    """
+    Standardized execution interface for Stage 6.
+    """
+    stage6_res = run_stage_6(bitstream)
+    
+    hex_inspector = stage6_res.get("hex_inspector", {})
+    raw_rows = hex_inspector.get("hex_dump", [])
+    
+    flat_rows = []
+    for r in raw_rows:
+        # Determine dominant region label for the 16-byte chunk
+        regions = [reg["label"] for reg in r.get("regions", [])]
+        dominant_region = "payload"
+        for label in ["preamble", "header", "checksum"]:
+            if label in regions:
+                dominant_region = label
+                break
+                
+        flat_rows.append({
+            "offset": int(r["offset"], 16) if isinstance(r["offset"], str) else r["offset"],
+            "hex": r["hex"],
+            "ascii": r["ascii"],
+            "region": dominant_region
+        })
+        
+    return {
+        "frame_length": stage6_res.get("frame_length_bits") or 0,
+        "preamble_matches": stage6_res.get("preambles_found_count", 0),
+        "hex_dump": flat_rows
+    }
 
 # =====================================================================
 # Pre-Commit Extended Verification Test Suite

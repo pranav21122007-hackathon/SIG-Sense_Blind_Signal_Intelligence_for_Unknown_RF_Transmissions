@@ -14,6 +14,8 @@ Usage:
     # Auto-process ALL files in testdata folder:
     python sync.py --batch -r 1000 -fs 100000
 """
+import sys
+sys.path.append(r"C:\radioconda\Lib\site-packages")
 
 import argparse
 import glob
@@ -231,3 +233,77 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Sync_gnuradio/sync.py
+
+def slice_constellation_to_bits(symbols: np.ndarray, modulation: str) -> np.ndarray:
+    """
+    Converts 1 SPS synchronized complex constellation symbols into discrete binary bits.
+    """
+    mod = modulation.upper()
+    
+    if mod == "BPSK":
+        # Binary antipodal: real axis sign determines bit
+        return (np.real(symbols) > 0).astype(np.uint8)
+        
+    elif mod in ["QPSK", "4PSK", "4QAM"]:
+        # Gray-coded QPSK slicing across quadrants: (I > 0, Q > 0)
+        b0 = (np.real(symbols) > 0).astype(np.uint8)
+        b1 = (np.imag(symbols) > 0).astype(np.uint8)
+        # Interleave bits: b0, b1, b0, b1...
+        return np.column_stack((b0, b1)).flatten()
+        
+    elif mod == "8PSK":
+        # 8-ary phase partition: maps symbol angle [0, 2pi) into 3-bit words
+        angles = np.angle(symbols) % (2 * np.pi)
+        sector_idx = np.floor((angles + (np.pi / 8)) / (np.pi / 4)).astype(np.uint8) % 8
+        bits_matrix = np.unpackbits(sector_idx[:, np.newaxis], axis=1)[:, -3:]
+        return bits_matrix.flatten()
+        
+    elif mod in ["16QAM", "64QAM"]:
+        # Standard threshold slicing for rectangular grids
+        i_bits = (np.real(symbols) > 0).astype(np.uint8)
+        q_bits = (np.imag(symbols) > 0).astype(np.uint8)
+        return np.column_stack((i_bits, q_bits)).flatten()
+        
+    else:
+        # Fallback slicing
+        return (np.real(symbols) > 0).astype(np.uint8)
+
+def run_stage_3(fc32_file_path: str, fs: float, rs: float, mod_str: str, output_dir: str):
+    """
+    Standardized execution interface for Stage 3.
+    """
+    order = MODULATION_MAP.get(mod_str.upper(), 4)
+    raw_snap = os.path.join(output_dir, "raw_snapshot.npy")
+    locked_snap = os.path.join(output_dir, "locked_snapshot.npy")
+    out_symbols = os.path.join(output_dir, "recovered_symbols.dat")
+    
+    pipeline = BlindSyncPipeline(
+        input_file=fc32_file_path,
+        samp_rate=fs,
+        symbol_rate=rs,
+        mod_order=order,
+        raw_snap_file=raw_snap,
+        locked_snap_file=locked_snap,
+        output_symbols_file=out_symbols
+    )
+    pipeline.run()
+    raw_pts, locked_pts = pipeline.save_snapshots()
+    
+    # Read full recovered complex stream
+    symbols = np.fromfile(out_symbols, dtype=np.complex64)
+    
+    # Slice complex symbols into bits for Stage 4/5/6
+    bits = slice_constellation_to_bits(symbols, mod_str)
+    
+    # Decimate snapshot scatter points (~300 points) for JSON payload
+    def to_points(arr, n=300):
+        sub = arr[:min(len(arr), n)]
+        return [{"x": round(float(c.real), 3), "y": round(float(c.imag), 3)} for c in sub]
+
+    return {
+        "bits": bits,
+        "raw_points": to_points(raw_pts),
+        "synced_points": to_points(locked_pts)
+    }

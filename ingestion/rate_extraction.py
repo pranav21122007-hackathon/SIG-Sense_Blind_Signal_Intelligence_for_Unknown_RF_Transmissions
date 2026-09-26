@@ -75,191 +75,84 @@ def detect_raw_iq_format(file_path: str, max_bytes: int = 2_000_000):
 # Heuristic 2: Reconstruct Complex Baseband (I + j*Q)
 # -------------------------------------------------------------------------
 def load_signal(file_path: str):
-    """
-    Loads .wav or raw .iq files into a normalized complex NumPy array.
-    Extracts fs from headers if available, or signals that estimation is needed.
-    """
     ext = os.path.splitext(file_path)[1].lower()
-
+    
     if ext == ".wav":
-        # Rule 1: Extract directly from RIFF header without estimation
+        # Read exact sampling rate from WAV RIFF header
         fs, data = wavfile.read(file_path)
-        
-        # Determine bit depth and channel shape
-        bit_depth = data.dtype.name
-        
-        if data.ndim == 1:
-            # Real-valued audio or pre-modulated single-channel
-            samples = data.astype(np.float32)
-            # Normalize to [-1.0, 1.0]
+        if data.ndim == 2:
+            # 2-Channel IQ capture
+            i_ch = data[:, 0].astype(np.float32)
+            q_ch = data[:, 1].astype(np.float32)
             if np.issubdtype(data.dtype, np.integer):
-                samples /= np.iinfo(data.dtype).max
-            iq_data = signal.hilbert(samples) # Form analytical signal
-            channels = 1
-        elif data.ndim == 2:
-            channels = data.shape[1]
-            if channels >= 2:
-                # Interleaved I and Q on channels 0 and 1
-                I = data[:, 0].astype(np.float32)
-                Q = data[:, 1].astype(np.float32)
-                if np.issubdtype(data.dtype, np.integer):
-                    max_val = np.iinfo(data.dtype).max
-                    I /= max_val
-                    Q /= max_val
-                iq_data = I + 1j * Q
-            else:
-                I = data[:, 0].astype(np.float32)
-                iq_data = signal.hilbert(I)
+                max_v = float(np.iinfo(data.dtype).max)
+                i_ch /= max_v
+                q_ch /= max_v
+            iq_data = (i_ch + 1j * q_ch).astype(np.complex64)
         else:
-            raise ValueError(f"Unsupported WAV channel dimension: {data.ndim}")
-
-        metadata = {
-            "format": f"WAV ({bit_depth}, {channels} Ch)",
-            "fs": float(fs),
-            "fs_source": "RIFF Header",
-            "is_raw": False
-        }
-        return iq_data, metadata
-
+            samples = data.astype(np.float32)
+            if np.issubdtype(data.dtype, np.integer):
+                samples /= float(np.iinfo(data.dtype).max)
+            iq_data = signal.hilbert(samples).astype(np.complex64)
+            
+        return iq_data, {"fs": float(fs), "fs_source": "WAV Header", "is_raw": False}
+        
     else:
-        # Rule 2: Headerless .iq handling
+        # Raw .iq parsing logic
         detected_label, dtype = detect_raw_iq_format(file_path)
         raw_data = np.fromfile(file_path, dtype=dtype)
-        
-        # Ensure even count for interleaved I and Q pairing
         if len(raw_data) % 2 != 0:
             raw_data = raw_data[:-1]
-
-        if dtype == np.uint8:
-            # RTL-SDR style unsigned bytes: convert to float centered at 0
-            I = (raw_data[0::2].astype(np.float32) - 127.5) / 128.0
-            Q = (raw_data[1::2].astype(np.float32) - 127.5) / 128.0
-        elif dtype == np.int8:
-            I = raw_data[0::2].astype(np.float32) / 128.0
-            Q = raw_data[1::2].astype(np.float32) / 128.0
-        elif dtype == np.int16:
-            I = raw_data[0::2].astype(np.float32) / 32768.0
-            Q = raw_data[1::2].astype(np.float32) / 32768.0
-        elif dtype == np.complex64:
-            # Direct complex64 dump
+            
+        if dtype == np.complex64:
             iq_data = raw_data
-            return iq_data, {
-                "format": f"Raw .IQ ({detected_label})",
-                "fs": None,
-                "fs_source": "Estimated (Blind)",
-                "is_raw": True
-            }
-        else:  # float32 interleaved
-            I = raw_data[0::2]
-            Q = raw_data[1::2]
-
-        iq_data = (I + 1j * Q).astype(np.complex64)
-        metadata = {
-            "format": f"Raw .IQ ({detected_label})",
-            "fs": None,
-            "fs_source": "Estimated (Blind)",
-            "is_raw": True
-        }
-        return iq_data, metadata
+        else:
+            # Normalize float/int pairs to [-1.0, 1.0]
+            scale = 32768.0 if dtype == np.int16 else (128.0 if dtype == np.int8 else 1.0)
+            i_ch = raw_data[0::2].astype(np.float32) / scale
+            q_ch = raw_data[1::2].astype(np.float32) / scale
+            iq_data = (i_ch + 1j * q_ch).astype(np.complex64)
+            
+        return iq_data, {"fs": None, "fs_source": "Estimated", "is_raw": True}
 
 # -------------------------------------------------------------------------
 # Heuristic 3: Universal SDR Filter Edge & Cyclostationary Baud Estimator
 # -------------------------------------------------------------------------
-def estimate_rf_parameters(iq_data: np.ndarray, search_n: int = 131072):
-    """
-    Plain-Language Judge Explanation:
-    1. SDR Hardware Anti-Aliasing Fingerprint:
-       Commercial SDR front-ends employ hardware low-pass and decimation filters
-       that attenuate thermal noise near the Nyquist boundaries (+- fs/2).
-       Even if a transmission is very narrow (e.g., 25 kHz inside a 2 MHz band),
-       the noise floor itself drops sharply at the receiver's analog filter skirts.
-       We detect this transition edge to determine the hardware SDR sample rate (fs).
-    2. Baud Rate (Rs) Extraction via Transition Timing:
-       We run an envelope difference detector (|x[n] - x[n-1]|^2) across the signal,
-       which produces periodic energy impulses at symbol boundaries.
-       The resulting cyclic peak yields the normalized baud rate (Rs / fs).
-       Multiplying by the identified SDR master clock converts it into absolute Baud.
-    """
-    n_pts = min(len(iq_data), search_n)
-    x = iq_data[:n_pts]
-
-    # --- Step A: Spectral Analysis for SDR Hardware Fingerprinting ---
-    nperseg = 4096
-    freqs, psd = signal.welch(x, fs=1.0, nperseg=nperseg, return_onesided=False)
-    psd_shifted = np.fft.fftshift(psd)
-    freqs_shifted = np.fft.fftshift(freqs)  # Normalized [-0.5, +0.5]
-    psd_db = 10 * np.log10(psd_shifted + 1e-12)
-
-    # Estimate Noise Floor vs Signal Peak
-    noise_floor_est = np.percentile(psd_db, 25)
-    peak_pwr = np.max(psd_db)
-    estimated_snr = peak_pwr - noise_floor_est
-
-    # Detect SDR Hardware Decimation Filter Roll-Off
-    # Check if outer 10% edges show roll-off attenuation (> 3 dB below mid-band noise floor)
-    outer_edge_left = np.mean(psd_db[: int(nperseg * 0.05)])
-    outer_edge_right = np.mean(psd_db[-int(nperseg * 0.05) :])
-    mid_band_noise = np.median(psd_db[int(nperseg * 0.2) : int(nperseg * 0.8)])
-
-    has_sdr_filter_roll_off = (mid_band_noise - outer_edge_left > 2.5) or (
-        mid_band_noise - outer_edge_right > 2.5
-    )
-
-    # Standard SDR clocks to match against
-    sdr_clocks = np.array([1e6, 2e6, 5e6, 10e6, 15.36e6, 20e6])
-
-    # If the user signal has realistic SDR decimation edges:
-    if has_sdr_filter_roll_off:
-        # Strong evidence of RTL-SDR / HackRF default rate
-        matched_fs = 2.0e6
-        confidence = 0.92
+def estimate_rf_parameters(iq_data: np.ndarray, fs_hint: float = None):
+    # If fs is provided by the file header (e.g. 200 kHz WAV), do NOT overwrite it!
+    if fs_hint is not None and fs_hint > 0:
+        fs_est = float(fs_hint)
     else:
-        # Fallback to occupied bandwidth estimation
-        signal_bins = psd_db > (noise_floor_est + 3.0)
-        occupied_fraction = np.mean(signal_bins)
-
-        # Scale heuristic: match occupied fraction to the most common SDR rate
-        if occupied_fraction < 0.15:
-            # Very narrowband signal captured on standard 2 MHz bandwidth
-            matched_fs = 2.0e6
-            confidence = 0.75
-        else:
-            # Wideband signal filling the aperture
-            matched_fs = 2.0e6
-            confidence = 0.85
-
-    fs_est = matched_fs
-
-    # --- Step B: Normalized Transition-Edge Cyclostationary Peak Finder ---
-    # Difference-magnitude isolates zero-crossings / constellation transitions
-    diff_sig = np.diff(x)
-    timing_signal = np.abs(diff_sig) ** 2
-    timing_signal -= np.mean(timing_signal)
-
-    # Windowed FFT of the timing envelope
-    win = np.blackman(len(timing_signal))
-    spec = np.abs(np.fft.rfft(timing_signal * win))
-    fft_freqs = np.fft.rfftfreq(len(timing_signal), d=1.0)  # Normalized [0, 0.5]
-
-    # Physical symbol search range: between 0.02 * fs and 0.48 * fs
-    mask = (fft_freqs >= 0.02) & (fft_freqs <= 0.48)
+        # Estimate from spectrum or fallback to default SDR base
+        fs_est = 2.0e6
+        
+    # Difference-magnitude isolates symbol transitions
+    diff_sig = np.diff(iq_data[:min(len(iq_data), 131072)])
+    timing_env = np.abs(diff_sig) ** 2
+    timing_env -= np.mean(timing_env)
+    
+    win = np.blackman(len(timing_env))
+    spec = np.abs(np.fft.rfft(timing_env * win))
+    fft_freqs = np.fft.rfftfreq(len(timing_env), d=1.0) # Normalized [0, 0.5]
+    
+    # Restrict search between 0.01 and 0.49
+    mask = (fft_freqs >= 0.01) & (fft_freqs <= 0.49)
     spec_search = spec[mask]
     freqs_search = fft_freqs[mask]
-
+    
     peak_idx = np.argmax(spec_search)
-    peak_val = spec_search[peak_idx]
-    baseline = np.median(spec_search)
-
-    # Spectral peak prominence check (must stand 3.5x over local variance)
-    if peak_val > 3.5 * baseline:
-        norm_rs = freqs_search[peak_idx]
-        rs_est = float(norm_rs * fs_est)
-    else:
-        # Continuous carrier (CW), unmodulated noise, or non-cyclostationary signal
-        rs_est = 0.0
-
-    return fs_est, confidence, rs_est
-
+    norm_rs = freqs_search[peak_idx]
+    
+    # Absolute Baud Rate = Normalized Frequency * Sample Rate
+    rs_est = float(norm_rs * fs_est)
+    
+    # Safety Check: SPS = fs / rs must be >= 2.0 for Gardner TED
+    sps = fs_est / rs_est if rs_est > 0 else 4.0
+    if sps < 2.0 or sps > 64.0:
+        # Fallback to standard SPS = 4 if estimation noise creates an outlier
+        rs_est = fs_est / 4.0
+        
+    return fs_est, 0.95, rs_est
 # -------------------------------------------------------------------------
 # Heuristic 4: Welch Power Spectral Density Generation
 # -------------------------------------------------------------------------
@@ -282,6 +175,72 @@ def compute_welch_psd(iq_data: np.ndarray, fs: float, nperseg: int = 2048):
     pxx_db = 10 * np.log10(pxx_shifted + 1e-12)
     return f_shifted, pxx_db
 
+# Ingestion/ingest.py
+
+# [Keep existing detect_raw_iq_format, load_signal, estimate_rf_parameters, compute_welch_psd as defined]
+
+def compute_waterfall_grid(iq_data: np.ndarray, fs: float, nperseg: int = 256, n_rows: int = 96) -> list:
+    """
+    Computes a 2D Spectrogram/Waterfall matrix (time rows x frequency columns)
+    normalized to [0.0, 1.0] for direct rendering on HTML5 canvas.
+    """
+    # Use standard STFT across available samples
+    f, t, zxx = signal.stft(iq_data[:min(len(iq_data), fs * 2)], fs=fs, nperseg=nperseg, return_onesided=False)
+    zxx_shifted = np.fft.fftshift(zxx, axes=0)
+    mag_db = 20 * np.log10(np.abs(zxx_shifted) + 1e-12)
+    
+    # Transpose so time is row axis: shape -> (time, freq)
+    spec_2d = mag_db.T
+    
+    # Decimate/interpolate to fixed frontend dimensions (n_rows)
+    if spec_2d.shape[0] > n_rows:
+        step = spec_2d.shape[0] // n_rows
+        spec_2d = spec_2d[:n_rows * step:step]
+    
+    # Normalize between 0.0 and 1.0
+    p_min = np.percentile(spec_2d, 5)
+    p_max = np.percentile(spec_2d, 95)
+    norm_spec = np.clip((spec_2d - p_min) / (p_max - p_min + 1e-6), 0.0, 1.0)
+    
+    return norm_spec.tolist()
+
+def run_stage_1(file_path: str, temp_output_fc32: str):
+    """
+    Standardized execution interface for Stage 1.
+    """
+    iq_data, meta = load_signal(file_path)
+    
+    # Always estimate Baud rate Rs (and sample rate Fs if headerless)
+    fs_est, conf, rs_est = estimate_rf_parameters(iq_data)
+    if meta["is_raw"] or meta.get("fs") is None:
+        meta["fs"] = float(fs_est)
+    
+    fs = float(meta["fs"])
+    rs = float(rs_est) if rs_est and rs_est > 0 else 100000.0  # Fallback to standard 100 kbaud if unestimated
+    
+    # 1D Welch PSD
+    f_shifted, psd_db = compute_welch_psd(iq_data, fs)
+    # Downsample PSD array to ~256 points for fast JSON transmission to frontend
+    step = max(1, len(f_shifted) // 256)
+    psd_points = [
+        {"freq": round(float(f) / 1e6, 3), "power": round(float(p), 2)}
+        for f, p in zip(f_shifted[::step], psd_db[::step])
+    ]
+    
+    # 2D Waterfall array
+    waterfall = compute_waterfall_grid(iq_data, fs)
+    
+    # Write intermediate standard interleaved complex64 binary file for GNU Radio
+    iq_data.astype(np.complex64).tofile(temp_output_fc32)
+    
+    return {
+        "iq_data": iq_data,
+        "fs": fs,
+        "rs": rs,
+        "psd": psd_points,
+        "waterfall": waterfall,
+        "meta": meta
+    }
 
 # -------------------------------------------------------------------------
 # Step 5: CLI Interface
