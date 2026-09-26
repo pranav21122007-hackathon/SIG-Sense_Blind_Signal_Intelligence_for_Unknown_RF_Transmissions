@@ -1,0 +1,152 @@
+[
+    {
+        "file": "signal_idx0_snr0dB_cols4.iq",
+        "snr_db": 0,
+        "interleaver_rows": 16,
+        "interleaver_cols": 4,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    },
+    {
+        "file": "signal_idx1_snr5dB_cols4.iq",
+        "snr_db": 5,
+        "interleaver_rows": 16,
+        "interleaver_cols": 4,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    },
+    {
+        "file": "signal_idx2_snr10dB_cols4.iq",
+        "snr_db": 10,
+        "interleaver_rows": 16,
+        "interleaver_cols": 4,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    },
+    {
+        "file": "signal_idx3_snr15dB_cols4.iq",
+        "snr_db": 15,
+        "interleaver_rows": 16,
+        "interleaver_cols": 4,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    },
+    {
+        "file": "signal_idx4_snr20dB_cols4.iq",
+        "snr_db": 20,
+        "interleaver_rows": 16,
+        "interleaver_cols": 4,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    },
+    {
+        "file": "signal_idx5_snr0dB_cols8.iq",
+        "snr_db": 0,
+        "interleaver_rows": 16,
+        "interleaver_cols": 8,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    },
+    {
+        "file": "signal_idx6_snr5dB_cols8.iq",
+        "snr_db": 5,
+        "interleaver_rows": 16,
+        "interleaver_cols": 8,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    },
+    {
+        "file": "signal_idx7_snr10dB_cols8.iq",
+        "snr_db": 10,
+        "interleaver_rows": 16,
+        "interleaver_cols": 8,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    },
+    {
+        "file": "signal_idx8_snr15dB_cols8.iq",
+        "snr_db": 15,
+        "interleaver_rows": 16,
+        "interleaver_cols": 8,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    },
+    {
+        "file": "signal_idx9_snr20dB_cols8.iq",
+        "snr_db": 20,
+        "interleaver_rows": 16,
+        "interleaver_cols": 8,
+        "fec_type": "Conv_K7_R1/2",
+        "poly": [
+            109,
+            79
+        ],
+        "modulation": "QPSK",
+        "baud_rate": 50000,
+        "sample_rate": 200000,
+        "dtype": "complex64"
+    }
+]
