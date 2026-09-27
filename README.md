@@ -1,12 +1,6 @@
 # SIG-Sense
 ### Blind Signal Intelligence for Universal RF Transmissions
- 
-**Smart India Hackathon 2026 — Problem Statement SIH26147**
-*Automated model for analysis of .IQ and .wav files along with signal parameter extraction*
-Sponsored by **NTRO** · Domain: **Space Technology**
- 
----
- 
+  
 ## Overview
  
 SIG-Sense takes a raw, unlabeled `.IQ` or `.wav` capture — with **no prior knowledge of the transmitter** — and automatically reconstructs it end-to-end: signal parameters, modulation, interleaving, forward error correction, frame structure, and payload, surfaced through a single analysis dashboard.
